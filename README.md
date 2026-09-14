@@ -27,7 +27,7 @@ O modelo adotado é o **Star Schema (Esquema Estrela)** centrado na tabela fato 
 
 > **Diagrama do Modelo Estrela:**
 
-![alt text](diagrama_estrela.png)
+![alt text](./imagens/diagrama_estrela.png)
 
 
 ---
@@ -39,6 +39,8 @@ Para reproduzir o banco de dados do zero em um ambiente MySQL 8.0, execute os ar
 2. **`02-dimensoes-e-estruturas.sql`**: Configura a `dim_tempo` (já populada), a `dim_loja` e inicializa as estruturas vazias das tabelas `dim_categoria`, `dim_praca`, `bridge_loja_praca` e `fato_pedido`.
 3. **`03-carga-dimensoes.sql`**: Popula as dimensões auxiliares aplicando as limpezas de texto e regras de negócio.
 4. **`04-carga-fato.sql`**: Executa a carga única (`INSERT INTO ... SELECT`) da tabela `fato_pedido`, aplicando as conversões de datas americanas, formatação de valores monetários, tratamento de nulos para `-1` e cálculo dos tempos de processo (`DATEDIFF`).
+5. **`05-perguntas.sql`**: Consultas que respondem as 5 perguntas de negocio.
+6. **`06-diagnostico_origem.sql`**: Consultas que respondem as perguntas de diagnóstico inicial dos dados.
 
 ---
 
@@ -52,12 +54,13 @@ Os SELECTS que respondem as perguntas de dignóstico da origem estão no arquivo
 - Quantos pedidos vieram sem código de loja? 
 - Quantos sem nome de loja? 
 
-![alt text](diagnostico_origem1.png)
+![alt text](./imagens/diagnostico_origem1.png)
 
 
 - Quantos marcos de processo estão em branco?
 
-![alt text](diagnostico_origem2.png)
+![alt text](./imagens/diagnostico_origem2.png)
+
 ---
 
 ## Tarefa 2: Tratatamentos
@@ -105,42 +108,42 @@ Os SELECTS que respondem essas perguntas estão no arquivo 05-perguntas.sql
  **P1 : Onde está o gargalo da entrega? Qual o tempo médio, em dias, entre o pedido entrar no ERP e chegar na casa do cliente? E qual dos quatro intervalos do processo  Integração → Separação, Separação → Nota, Nota → Despacho, Despacho → Entrega  é o mais lento?**
 
 Resposta: o tempo medio em dias para uma entrega são 9 dias. O processo mais lento é Nota -> Despacho, com media de 4,11 dias.
-![alt text](p1.1.png)
+![alt text](./imagens/p1.1.png)
 
 **O gargalo é o mesmo nos três portes de loja?**
 
 Resposta: o gargalo é o mesmo em todos os portes de loja (nota -> despacho) mas observa-se que na loja de porte pequeno a media dessa operação é muito superior (8,53 dias) do que nas lojas de porte medio e grande (~3,3 dias). 
 
-![alt text](p1.2.png)
+![alt text](./imagens/p1.2.png)
 
 ### P2: Qual categoria concentra o faturamento?
 Resposta: A categoria de **Ração** lidera o faturamento da rede em **todos os três portes de loja** (Pequena, Média e Grande).
 
-![alt text](p2.1.png)
+![alt text](./imagens/p2.1.png)
 
-![alt text](p2.2.png)
+![alt text](./imagens/p2.2.png)
 
 ### P3: O desconto funciona igual em todo canal?
 Resposta: Os dados provam que a aplicação de descontos **derruba o ticket médio em todos os canais de venda** da rede.
 
-![alt text](p3.png)
+![alt text](./imagens/p3.png)
 
 ### P4: Qual praça de atendimento concentra o faturamento?
  A região do **Vale do Itajaí** concentra o maior faturamento rateado.
 * **OBS** Houve uma diferença de **R$ 58.047,36** entre o faturamento total da rede bruta (R$ 1.793.308,51) e a soma do rateio por praças (R$ 1.735.261,16). Essa variação ocorre devido a pedidos oriundos de lojas sem código e nome identificados na origem, que portanto não encontraram correspondência na tabela ponte.
 
-![alt text](p4.png)
+![alt text](./imagens/p4.png)
 
 ### P5: Onde abrir a próxima loja e o que os dados não permitem afirmar:
 * **Ranqueie as lojas por itens vendidos por mil habitantes da cidade  não em valor absoluto  e cruze com o tempo médio de entrega:**
  as praças com maior densidade de consumo per capita e eficiência logística estão no topo do ranking.
 
- ![alt text](p5.1.png)
+ ![alt text](./imagens/p5.1.png)
 
     
 * **Limitação da Faixa de Franquia (SCD Tipo 1):** Analisar o faturamento pela faixa atual de franquia **não** responde "quanto veio de lojas que já eram Ouro na data do pedido", pois o banco sofre de sobrescrita de histórico (o cadastro guarda apenas o status atual, mascarando o porte que a loja possuía no momento da venda no passado).
 
-![alt text](p5.2.png)
+![alt text](./imagens/p5.2.png)
 
 * **Auditoria de Exclusões:**
   * Pedidos sem loja identificada (chave `-1`): **129**.
@@ -148,4 +151,4 @@ Resposta: Os dados provam que a aplicação de descontos **derruba o ticket méd
   * Itens em branco/nulos: **257**.
   * Valores em branco/nulos: **121**.
 
-![alt text](p5.3.png)
+![alt text](./imagens/p5.3.png)
