@@ -34,25 +34,11 @@ O modelo adotado é o **Star Schema (Esquema Estrela)** centrado na tabela fato 
 - Nenhuma chave estrangeira (FK) na tabela fato assume valores nulos; registros ausentes ou corrompidos apontam para a linha padrão `-1` ("Não Informado").
 
 > **Diagrama do Modelo Estrela:**
-> ![Modelo Dimensional](./diagrama_estrela.png)
-> *(Nota: Certifique-se de salvar a imagem do seu diagrama com o nome `diagrama_estrela.png` na mesma pasta do README no GitHub).*
+
+![alt text](diagrama_estrela.png)
+
 
 ---
-
-## Diagnóstico da Origem (Tarefa 1)
-
-
-As tabelas de staging estão com vários problemas nos dados.
-
-- **Grafias de Lojas e Categorias:** Existiam variações de digitação, abreviações (ex: *Blumenal*, *Floripa*, *Jgua do Sul*) e inclusão de sufixos de estado (`/SC`) que necessitaram de padronização via regras condicionais (`CASE WHEN` e `REPLACE`).
-* **Marcos de Processo em Branco:** Foram mapeados diversos registros com etapas operacionais pendentes na origem, traduzidos adequadamente para valores nulos (`NULL`) para não corromper os cálculos de *lags* em dias:
-  * Separação de Estoque em branco: **1.077** pedidos.
-  * Emissão de Nota Fiscal em branco: **1.338** pedidos.
-  * Despacho na Transportadora em branco: **1.665** pedidos.
-  * Entrega ao Cliente em branco: **1.953** pedidos (pedidos em andamento).
-
----
-
 ## Ordem de Execução dos Scripts SQL
 
 Para reproduzir o banco de dados do zero em um ambiente MySQL 8.0, execute os arquivos na seguinte sequência lógica:
@@ -64,153 +50,110 @@ Para reproduzir o banco de dados do zero em um ambiente MySQL 8.0, execute os ar
 
 ---
 
-## Respostas às Perguntas de Negócio
+## Tarefa 1: Diagnóstico da Origem 
 
-### P1: Onde está o gargalo da entrega?
-* **Tempo médio geral:** O ciclo completo de ponta a ponta (do pedido na base até a casa do cliente) leva em média **9 dias**.
-* **Intervalo mais lento:** O processo mais crítico é a etapa de **Nota Fiscal → Despacho**, com uma média de **4,11 dias**.
-* **Análise por Porte:** O gargalo permanece sendo o mesmo em todos os portes de loja, porém as **lojas de porte pequeno** sofrem com uma lentidão severa nessa mesma etapa (média de **8,53 dias**, contra ~3,3 dias nas médias e grandes).
+As tabelas de staging estão com vários problemas nos dados.
+Os SELECTS que respondem as perguntas de dignóstico da origem estão no arquivo 06-dianostico_origem.sql
+
+- Quantas grafias de loja existem? 
+- Quantas de categoria? 
+- Quantos pedidos vieram sem código de loja? 
+- Quantos sem nome de loja? 
+
+![alt text](diagnostico_origem1.png)
+
+
+- Quantos marcos de processo estão em branco?
+
+![alt text](diagnostico_origem2.png)
+---
+
+## Tarefa 2: Tratatamentos
+
+Para garantir a integridade dos dados e a consistência analítica do modelo dimensional, foram aplicados tratamentos  nas etapas de transformação e carga das dimensões e da tabela fato:
+
+1. **Tratamento nas Dimensões (dim_categoria e dim_praca)**: 
+    - Padronização de Categorias (dim_categoria): Os nomes crus da origem (CategoriaProduto) foram mapeados através de condicionais CASE WHEN para agrupar variações textuais em categorias oficiais limpas (nome_categoria), além de classificá-las grupos de negócio (grupo_categoria como Alimentação, Saúde e Higiene e Bem-estar).
+
+    -   Limpeza de Indicadores Populacionais (dim_praca): Na tabela de praças, o campo de domicílios com pet continha formatação de separador de milhar (ex: '148.000'). Utilizou-se a função REPLACE combinada com CAST para converter a string em um número inteiro tratável (SIGNED).
+
+    - Tratamento de Nulos com a Linha -1: Todas as dimensões receberam a linha padrão sk = -1 ("Não Informado"). Nenhuma chave estrangeira na fato assume valores nulos (NULL), garantindo integridade referencial.
+
+2. **Tratamento na Tabela Ponte (bridge_loja_praca)**:
+    - Conversão de Fatores de Rateio: Os percentuais de público da tabela ponte (PercentualPublico) que vieram em formato textual com vírgula (padrão brasileiro) foram convertidos utilizando REPLACE para o ponto decimal e transformados no tipo DECIMAL(5,2), viabilizando o cálculo correto do rateio proporcional por praça sem distorcer a soma do faturamento.
+
+3. **Tratamento na Tabela Fato (fato_pedido)**:
+    - Conversão e Padronização de Datas: A data e hora do pedido (DtHoraPedido) foi convertida do formato americano com AM/PM usando estritamente a máscara STR_TO_DATE(..., '%m/%d/%Y %h:%i %p') para evitar falhas silenciosas. O resultado foi transformado na chave inteira da dim_tempo no formato AAAAMMDD via DATE_FORMAT.
+
+    - As datas de entrega em branco, nulas ou preenchidas com traços ('-') foram tratadas condicionalmente para apontar para a chave padrão -1.
+
+    - Resolução de Chaves por LEFT JOIN (Lojas e Categorias):
+
+    - A identificação da loja tratou variações de digitação e abreviações da origem (como Blumenal, Floripa, Jgua do Sul) e a remoção de sufixos estaduais (/SC) por meio de REPLACE e CASE WHEN aninhados no ON do JOIN com a dim_loja.
+
+    - Registros sem correspondência de loja ou categoria receberam o valor padrão -1 via COALESCE.
+
+    - Padronização das colunas categóricas-(houve_desconto e canal_pedido):
+        - O campo de desconto foi normalizado em Sim, Nao ou Nao informado. 
+        - O canal de atendimento foi limpo por regras de correspondência textual (LIKE), priorizando termos específicos (como testar "WhatsApp" antes de "App" devido à sobreposição de substrings).
+
+    - Limpeza de Campos Numéricos e Monetários:
+
+        - Quantidades de itens e valores líquidos que continham caracteres textuais inválidos (como '', '-', prefixos 'R$' ou pontos de milhar) foram higienizados e convertidos com segurança para os tipos numéricos adequados (SIGNED e DECIMAL(15,2)).
+
+        - Cálculo de Lags Operacionais (DATEDIFF):
+
+        -   Os intervalos em dias entre as etapas do processo (Integração → Separação → Nota Fiscal → Despacho → Entrega) foram calculados estritamente na carga utilizando DATEDIFF. Etapas operacionais ainda não concluídas (com datas nulas ou em branco) receberam corretamente o valor NULL (nunca zero), preservando a precisão das médias estatísticas.
+---
+
+##  Respostas às Perguntas de Negócio
+
+Os SELECTS que respondem essas perguntas estão no arquivo 05-perguntas.sql
+
+ **P1 : Onde está o gargalo da entrega? Qual o tempo médio, em dias, entre o pedido entrar no ERP e chegar na casa do cliente? E qual dos quatro intervalos do processo  Integração → Separação, Separação → Nota, Nota → Despacho, Despacho → Entrega  é o mais lento?**
+
+Resposta: o tempo medio em dias para uma entrega são 9 dias. O processo mais lento é Nota -> Despacho, com media de 4,11 dias.
+![alt text](p1.1.png)
+
+**O gargalo é o mesmo nos três portes de loja?**
+
+Resposta: o gargalo é o mesmo em todos os portes de loja (nota -> despacho) mas observa-se que na loja de porte pequeno a media dessa operação é muito superior (8,53 dias) do que nas lojas de porte medio e grande (~3,3 dias). 
+
+![alt text](p1.2.png)
 
 ### P2: Qual categoria concentra o faturamento?
-* **Categoria Campeã:** A categoria de **Ração** lidera de forma absoluta o faturamento da rede em **todos os três portes de loja** (Pequena, Média e Grande).
+Resposta: A categoria de **Ração** lidera o faturamento da rede em **todos os três portes de loja** (Pequena, Média e Grande).
+
+![alt text](p2.1.png)
+
+![alt text](p2.2.png)
 
 ### P3: O desconto funciona igual em todo canal?
-* **Impacto do Desconto:** Os dados provam que a aplicação de descontos **derruba o ticket médio em todos os canais de venda** da rede, indicando que a política atual carece de revisão estratégica.
-* **Participação por Canal:**
-  * **App:** 30,79% do faturamento (Ticket médio com vs. sem desconto)
-  * **Site:** 25,13% do faturamento
-  * **Loja Física:** 20,11% do faturamento
-  * **WhatsApp:** 10,53% do faturamento
-  * **Telefone:** 6,88% do faturamento
-  * **Não Informado / Outros:** 6,57% do faturamento
+Resposta: Os dados provam que a aplicação de descontos **derruba o ticket médio em todos os canais de venda** da rede.
+
+![alt text](p3.png)
 
 ### P4: Qual praça de atendimento concentra o faturamento?
-* **Praça Líder:** A região do **Vale do Itajaí** concentra o maior faturamento rateado.
-* **Nota de Auditoria:** Houve uma diferença de **R$ 58.047,36** entre o faturamento total da rede bruta (R$ 1.793.308,51) e a soma do rateio por praças (R$ 1.735.261,16). Essa variação ocorre estritamente devido a pedidos oriundos de lojas sem código e nome identificados na origem, que portanto não encontraram correspondência na tabela ponte.
+ A região do **Vale do Itajaí** concentra o maior faturamento rateado.
+* **OBS** Houve uma diferença de **R$ 58.047,36** entre o faturamento total da rede bruta (R$ 1.793.308,51) e a soma do rateio por praças (R$ 1.735.261,16). Essa variação ocorre devido a pedidos oriundos de lojas sem código e nome identificados na origem, que portanto não encontraram correspondência na tabela ponte.
 
-### P5: Onde abrir a próxima loja e limitações analíticas
-* **Ranking de Expansão:** O ranqueamento por itens vendidos por mil habitantes cruzado com o tempo de entrega aponta as praças com maior densidade de consumo per capita e eficiência logística.
+![alt text](p4.png)
+
+### P5: Onde abrir a próxima loja e o que os dados não permitem afirmar:
+* **Ranqueie as lojas por itens vendidos por mil habitantes da cidade  não em valor absoluto  e cruze com o tempo médio de entrega:**
+ as praças com maior densidade de consumo per capita e eficiência logística estão no topo do ranking.
+
+ ![alt text](p5.1.png)
+
+    
 * **Limitação da Faixa de Franquia (SCD Tipo 1):** Analisar o faturamento pela faixa atual de franquia **não** responde "quanto veio de lojas que já eram Ouro na data do pedido", pois o banco sofre de sobrescrita de histórico (o cadastro guarda apenas o status atual, mascarando o porte que a loja possuía no momento da venda no passado).
+
+![alt text](p5.2.png)
+
 * **Auditoria de Exclusões:**
-  * Pedidos sem loja identificada (chave `-1`): **0** (tratados na carga).
+  * Pedidos sem loja identificada (chave `-1`): **129**.
   * Entregas não concluídas (`sk_tempo_entrega = -1`): **1.953** pedidos.
-  * Itens em branco/nulos: **0** (validados/tratados).
-  * Valores em branco/nulos: **0** (validados/tratados).
+  * Itens em branco/nulos: **257**.
+  * Valores em branco/nulos: **121**.
 
-### TAREFA 1 - DIAGNÓSTICO DA ORIGEM
-
-Quantas grafias de loja existem? 
-- Existem 50 grafias diferentes. Sao 32 lojas, portanto existem grafias diferentes para a mesma loja.
-
-SELECT COUNT(distinct `Loja-Nome`) from stg_pedido;
-
-Quantas de categoria?
-- Existem 18 grafias diferentes. 
-Sendo 4 para Medicamento, 3 para Racao, 2 para Acessorio, 2 para Servico, 2 para Brinquedo, 3 para Higiene e 2 para Petisco.
-
-SELECT COUNT(distinct CategoriaProduto) from stg_pedido;
-SELECT distinct CategoriaProduto from stg_pedido;
-
-Quantos pedidos vieram sem código de loja? 
-- Existem 1575 pedidos que estão sem o código da loja.
-
-Select count(*) from stg_pedido
-where `Cod Loja` = '';
-
-Quantos sem nome de loja? 
-- 3 pedidos estão sem nome da Loja.
-
-Select count(*) from stg_pedido
-where `Loja-Nome`= '';
-
-Quantos marcos de processo estão em branco? 
-- 	-- Resposta: 
-	-- separacaçao estoque = 1077 em branco
-	-- emissao nf = 1338
-	-- despacho transportadora = 1665 em branco
-	-- entrega gratis = 1953 em branco
-
-SELECT 
-	SUM(CASE WHEN `Dt Separacao Estoque` IS NULL OR `Dt Separacao Estoque` = '' THEN 1 ELSE 0 END) AS em_branco_separacao_estoque,
-	SUM(CASE WHEN `DtNotaFiscal` IS NULL OR `DtNotaFiscal` = '' THEN 1 ELSE 0 END) AS em_branco_emissao_nf,
-    SUM(CASE WHEN `Dt_Despacho_Transportadora` IS NULL OR `Dt_Despacho_Transportadora` = '' THEN 1 ELSE 0 END) AS em_branco_despacho_transportadora,
-    SUM(CASE WHEN `DtEntregaCliente` IS NULL OR `DtEntregaCliente` = '' THEN 1 ELSE 0 END) AS em_branco_entrega_cliente	
-FROM stg_pedido;
-
-
-
-
-### TAREFA 2 - TRATAMENTO
-
-#### Populando tabela dim_categoria
-
-INSERT INTO dim_categoria VALUES
-(-1, "Nao Informado", "Nao Informado", "Nao Informado");
-
-INSERT INTO dim_categoria(categoria_origem, nome_categoria, grupo_categoria)
-
-SELECT DISTINCT 
-
-	CategoriaProduto as categoria_origem,
-    CASE
-		WHEN UPPER(CategoriaProduto) LIKE '%MED%' THEN 'Medicamento'
-        WHEN UPPER(CategoriaProduto) LIKE '%PESTIC%' THEN 'Petisco'
-        WHEN UPPER(CategoriaProduto) LIKE '%RA%' THEN 'Racao'
-        WHEN UPPER(CategoriaProduto) LIKE '%HIG%' THEN 'Higiene'
-        WHEN UPPER(CategoriaProduto) LIKE '%BRINQ%' THEN 'Brinquedo'
-        WHEN UPPER(CategoriaProduto) LIKE '%ACESS%' THEN 'Acessorio'
-        WHEN UPPER(CategoriaProduto) LIKE '%SERV%' THEN 'Servico'
-        ELSE 'Nao informado'
-	END AS nome_categoria,
-    CASE
-		WHEN UPPER(CategoriaProduto) LIKE '%MED%' OR UPPER(CategoriaProduto) LIKE '%HIG%' THEN 'Saude e Higiene'
-        WHEN UPPER(CategoriaProduto) LIKE '%PESTIC%' OR UPPER(CategoriaProduto) LIKE '%RA%' THEN 'Alimentacao'
-        WHEN UPPER(CategoriaProduto) LIKE '%BRINQ%' OR UPPER(CategoriaProduto) LIKE '%ACESS%' OR UPPER(CategoriaProduto) LIKE '%SERV%' THEN 'Bem-estar'
-        ELSE 'Nao informado'
-	END AS grupo_categoria
-    FROM stg_pedido;
-
- #### Populando tabela dim_categoria 
-
- INSERT INTO dim_praca VALUES
-(-1, '-1', 'Nao Informado', 'Nao Informado', NULL);
- 
- INSERT INTO dim_praca(cod_praca, nome_praca, regional, domicilios_com_pet) 
-SELECT
-	CodPraca as cod_praca,
-    MAX(NomePraca) as nome_praca,
-    MAX(Regional) as regional,
-    CAST(Replace(MAX(DomiciliosComPet), '.', '') AS SIGNED) AS domicilios_com_pet
-FROM stg_loja_praca
-GROUP BY CodPraca;
-
-#### Populando a tabela bridge_loja_praca
-
-INSERT INTO bridge_loja_praca  (cod_loja, sk_praca, fator_publico)
-SELECT
-	s.CodLoja as cod_loja,
-    d.sk_praca as sk_praca,
-    CAST(REPLACE(s.PercentualPublico, ',' , '.') AS DECIMAL(5,2)) AS fator_publico
-FROM stg_loja_praca s
-INNER JOIN dim_praca d 
-ON s.CodPraca = d.cod_praca;
-
-____________________________________________
-### PERGUNTAS DE NEGOCIO 
-
--- P3 : O desconto funciona igual em todo canal? Compare o ticket médio COM e SEM desconto dentro de cada canal de venda (App, Site, Loja Física, Telefone, WhatsApp).
--- Se o desconto derruba o ticket em um canal e não em outro, a política não deveria ser a mesma nos dois. Diga também quanto cada canal representa do faturamento.
-
-SELECT 
-	canal_pedido AS canal_venda,
-    ROUND(AVG(CASE WHEN houve_desconto = 'Sim' THEN vl_liquido END), 2) AS ticket_medio_com_desconto,
-    ROUND(AVG(CASE when houve_desconto = 'Nao' THEN vl_liquido END), 2) AS ticket_medio_sem_desconto,
-    SUM(vl_liquido) AS faturamento,
-    ROUND(SUM(vl_liquido) / (SELECT SUM(vl_liquido) FROM fato_pedido) * 100, 2) AS percentual_canal
-FROM fato_pedido
-GROUP BY canal_pedido
-ORDER BY faturamento DESC;
-
--- RESPOSTA: o desconto derruba o ticket medio de todos os canais de venda.
-
-![alt text](image.png)
+![alt text](p5.3.png)
