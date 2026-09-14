@@ -5,14 +5,6 @@ O objeto é implementar um Data warehouse para a rede de petshops **Pata Amiga**
 
 O projeto contempla a modelagem dimensional, tratamento de dados de staging, carga da tabela fato/dimensões e respostas orientadas a perguntas de negócio usando o MySQL.
 
-
-##  Sumário
-1. [Sobre o Case](#-sobre-o-case)
-2. [Arquitetura e Modelo Dimensional](#-arquitetura-e-modelo-dimensional)
-3. [Diagnóstico da Origem (Tarefa 1)](#-diagnóstico-da-origem-tarefa-1)
-4. [Ordem de Execução dos Scripts SQL](#-ordem-de-execução-dos-scripts-sql)
-5. [Respostas às Perguntas de Negócio](#-respostas-às-perguntas-de-negócio)
-
 ---
 
 ## Sobre o Case
